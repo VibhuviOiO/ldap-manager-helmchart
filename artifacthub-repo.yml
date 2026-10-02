@@ -16,7 +16,7 @@
 #
 #   repositoryID  the UUID on the repository's Settings tab
 #   owners        the name and email on your Artifact Hub account
-repositoryID: REPLACE-WITH-ARTIFACTHUB-REPOSITORY-ID
+repositoryID: f4cb56a6-9460-4f54-aa06-26a7f65757ff
 owners:
   - name: Jinna Baalu
-    email: REPLACE-WITH-ARTIFACTHUB-ACCOUNT-EMAIL
+    email: 11784253+jinnabaalu@users.noreply.github.com

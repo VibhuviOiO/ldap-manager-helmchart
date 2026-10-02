@@ -375,10 +375,10 @@ The chart is published to GitHub Pages from this repository, which is what
 |---|---|
 | Repository | `https://VibhuviOiO.github.io/ldap-manager-helmchart` |
 | Chart | `ldap-manager` |
-| Artifact Hub | `https://artifacthub.io/packages/helm/<repository-slug>/ldap-manager` |
+| Artifact Hub | `https://artifacthub.io/packages/helm/ldap-manager/ldap-manager` |
 
 Artifact Hub repository names are globally unique, so the publisher slug is chosen when the
-repository is added there; substitute it for `<repository-slug>`. See
+repository is added there; substitute it for `ldap-manager`. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the maintainer-side setup (gh-pages, Pages, Artifact Hub
 registration, `artifacthub-repo.yml`).
 
