@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LDAP Manager values",
+  "type": "object",
+  "properties": {
+    "replicaCount": {
+      "type": "integer", "minimum": 1,
+      "description": "Number of UI pods. Must stay 1 while persistence.data or persistence.secrets uses a ReadWriteOnce volume, because two pods on different nodes cannot mount the same RWO claim. The chart fails the render if you raise this against RWO storage."
+    },
+    "image": {
+      "type": "object",
+      "description": "Container image for the LDAP Manager UI.",
+      "properties": {
+        "repository": { "type": "string", "description": "Image repository." },
+        "tag": { "type": "string", "description": "Image tag. Defaults to the chart appVersion when empty." },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"], "description": "Kubernetes image pull policy." }
+      }
+    },
+    "imagePullSecrets": { "type": "array", "description": "Secrets for pulling from a private registry." },
+    "nameOverride": { "type": "string", "description": "Override the chart name." },
+    "fullnameOverride": { "type": "string", "description": "Override the fully qualified release name." },
+    "serviceAccount": {
+      "type": "object",
+      "description": "Service account. The UI needs no Kubernetes API access, so it is created but never granted RBAC.",
+      "properties": {
+        "create": { "type": "boolean", "description": "Create a dedicated ServiceAccount." },
+        "annotations": { "type": "object", "description": "Annotations, e.g. an IRSA or workload-identity role." },
+        "name": { "type": "string", "description": "Existing ServiceAccount name. Used when create is false." }
+      }
+    },
+    "contextPath": { "type": "string", "description": "Serve under a sub-path, e.g. /ldap-manager, when behind a proxy that does not strip the prefix." },
+    "allowedOrigins": { "type": "string", "description": "Comma-separated CORS origins. Empty blocks cross-origin browser calls." },
+    "logLevel": { "type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], "description": "Application log level." },
+    "jsonLogs": { "type": "boolean", "description": "Emit structured JSON logs instead of plain text." },
+    "extraEnv": { "type": "array", "description": "Extra environment variables, e.g. LDAP_MANAGER_CLUSTER_<NAME>_PASSWORD." },
+    "extraEnvFrom": { "type": "array", "description": "Extra envFrom sources for supplying credentials from Secrets or ConfigMaps." },
+    "config": {
+      "type": "object",
+      "description": "The config.yml the UI reads. This is the only way clusters are defined - the application never writes it and has no runtime cluster or credential API.",
+      "properties": {
+        "existingConfigMap": { "type": "string", "description": "Use an existing ConfigMap instead of the rendered one." },
+        "key": { "type": "string", "description": "Key within the ConfigMap holding the config." },
+        "mountPath": { "type": "string", "description": "Mount path for the config file." },
+        "content": { "type": "string", "description": "Full config.yml as a string. Used when existingConfigMap is empty." },
+        "auth": {
+          "type": "object",
+          "description": "Authentication mode and role mapping.",
+          "properties": {
+            "mode": { "type": "string", "enum": ["none", "local", "ldap"], "description": "none serves anonymous traffic at defaultRole; local and ldap require a login even for reads." },
+            "defaultRole": { "type": "string", "enum": ["readonly", "readwrite", "admin"], "description": "Role granted to anonymous requests in none mode. Not user-selectable, because choosing your own role would be privilege escalation." },
+            "sessionLifetimeHours": { "type": "integer", "minimum": 1, "description": "Session lifetime in hours." },
+            "ldap": { "type": "object", "description": "LDAP authentication. Binds as the user's own DN, so no cluster-wide bind secret is needed to log in." }
+          }
+        },
+        "clusters": { "type": "array", "description": "Clusters to manage. Each entry needs a name, bind_dn and either host or nodes." },
+        "extra": { "type": "string", "description": "Extra YAML appended to the generated config." }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "description": "Credentials. Supply cluster bind passwords via env or file - never inline in config.yml.",
+      "properties": {
+        "existingSecret": { "type": "string", "description": "Use an existing Secret for credentials." },
+        "create": { "type": "boolean", "description": "Render a Secret from the values below." },
+        "env": { "type": "object", "description": "Environment variables sourced from a Secret." },
+        "mountPath": { "type": "string", "description": "Mount path for mounted credential files." }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "description": "State volumes. /app/.secrets holds the session signing key and local accounts, so its PVC carries helm.sh/resource-policy: keep - helm uninstall will not delete it.",
+      "properties": {
+        "data": { "$ref": "#/definitions/volume", "description": "Application data, including the audit log at /app/.data/audit.log." },
+        "secrets": { "$ref": "#/definitions/volume", "description": "Encryption and session keys." },
+        "cache": { "$ref": "#/definitions/volume", "description": "Optional cache volume." }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"], "description": "Service type." },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Service port." },
+        "annotations": { "type": "object", "description": "Service annotations." }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Create an Ingress. Terminate TLS here; the UI itself speaks plain HTTP." },
+        "className": { "type": "string", "description": "IngressClass name." },
+        "annotations": { "type": "object", "description": "Ingress annotations." },
+        "hosts": { "type": "array", "description": "Ingress host and path rules." },
+        "tls": { "type": "array", "description": "TLS configuration for the Ingress." }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "description": "Health probes against the app-local endpoint.",
+      "properties": {
+        "startup": { "$ref": "#/definitions/probe" },
+        "readiness": { "$ref": "#/definitions/probe" },
+        "liveness": { "$ref": "#/definitions/probe" }
+      }
+    },
+    "deploymentStrategy": { "type": "object", "description": "Rollout strategy. Defaults to maxSurge 0 / maxUnavailable 1 so two pods never contend for the same RWO claim." },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0, "description": "Grace period before SIGKILL." },
+    "podSecurityContext": { "type": "object", "description": "Pod-level security context. Runs as non-root by default." },
+    "securityContext": { "type": "object", "description": "Container-level security context." },
+    "resources": { "type": "object", "description": "CPU and memory requests and limits." },
+    "extraVolumes": { "type": "array", "description": "Extra volumes." },
+    "extraVolumeMounts": { "type": "array", "description": "Extra volume mounts." },
+    "podAnnotations": { "type": "object", "description": "Pod annotations." },
+    "podLabels": { "type": "object", "description": "Extra pod labels." },
+    "nodeSelector": { "type": "object", "description": "Node selector." },
+    "tolerations": { "type": "array", "description": "Tolerations." },
+    "affinity": { "type": "object", "description": "Affinity rules." },
+    "topologySpreadConstraints": { "type": "array", "description": "Topology spread constraints." },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Create a PodDisruptionBudget." },
+        "maxUnavailable": { "type": "integer", "minimum": 0, "description": "Pods that may be unavailable during voluntary disruption." }
+      }
+    }
+  },
+  "definitions": {
+    "volume": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Create a PVC." },
+        "existingClaim": { "type": "string", "description": "Use an existing PVC instead." },
+        "size": { "type": "string", "description": "Requested size, e.g. 1Gi." },
+        "accessModes": { "type": "array", "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"] }, "description": "Access modes. ReadWriteMany is required only if you raise replicaCount above 1." },
+        "storageClass": { "type": "string", "description": "StorageClass. Empty uses the cluster default." },
+        "annotations": { "type": "object", "description": "PVC annotations." }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
