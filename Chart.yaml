@@ -9,7 +9,7 @@ type: application
 # bump `version` for any change to templates/ or values.yaml. A new image needs
 # no chart change - appVersion picks it up.
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "1.1.0"
 kubeVersion: ">=1.24.0-0"
 # Square, vector, and already yours.
 icon: https://vibhuvioio.com/img/logo.svg
