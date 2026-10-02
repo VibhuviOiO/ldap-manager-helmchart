@@ -1,0 +1,38 @@
+{{- range $key, $claim := dict "data" (include "ldap-manager.dataClaimName" .) "secrets" (include "ldap-manager.secretsClaimName" .) "cache" (include "ldap-manager.cacheClaimName" .) }}
+{{- $p := index $.Values.persistence $key }}
+{{- if and $p.enabled (not $p.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $claim }}
+  labels:
+    {{- include "ldap-manager.labels" $ | nindent 4 }}
+  annotations:
+    # Helm deletes every object it rendered on `helm uninstall`, and a claim
+    # that comes from a template is no exception - immediately after the
+    # uninstall `kubectl get pvc` shows it Terminating, and the PV goes with it.
+    # Without this annotation /app/.secrets is destroyed by the uninstall,
+    # taking the Fernet key, the encrypted bind-password cache, any built-in
+    # local accounts and the session signing key with it.
+    #
+    # With it the claim survives, and a reinstall under the SAME release name
+    # and namespace adopts it (Helm matches the meta.helm.sh/release-*
+    # annotations it wrote on install). A different release name in the same
+    # namespace is refused as a foreign object; delete the claim first, or keep
+    # the release name. Removal is deliberate: `kubectl delete pvc <name>`.
+    helm.sh/resource-policy: keep
+    {{- with $p.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $p.accessModes | nindent 4 }}
+  {{- if $p.storageClass }}
+  storageClassName: {{ $p.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+{{- end }}
+{{- end }}

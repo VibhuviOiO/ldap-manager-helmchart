@@ -1,0 +1,206 @@
+{{- include "ldap-manager.replicaGuard" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ldap-manager.fullname" . }}
+  labels:
+    {{- include "ldap-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    {{- toYaml .Values.deploymentStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "ldap-manager.appSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ldap-manager.appSelectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Roll the pod when config.yml or the chart-managed Secret changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ldap-manager.serviceAccountName" . }}
+      # Kubernetes projects the API token under /run/secrets/kubernetes.io. The
+      # app never calls the API server and secrets.mountPath may sit under
+      # /run/secrets, so keep the token out of the pod entirely.
+      automountServiceAccountToken: false
+      # Stops Kubernetes injecting <SERVICE>_PORT for every Service in the
+      # namespace, which would otherwise collide with the app's own variables.
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ldap-manager
+          image: {{ include "ldap-manager.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # --- app configuration -------------------------------------------
+            - name: CONTEXT_PATH
+              value: {{ .Values.contextPath | quote }}
+            {{- if .Values.allowedOrigins }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.allowedOrigins | quote }}
+            {{- end }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: JSON_LOGS
+              value: {{ .Values.jsonLogs | quote }}
+            # --- config.yml --------------------------------------------------
+            # The ConfigMap is mounted as a directory so an edit propagates
+            # without a restart; the app re-reads the file on every request.
+            - name: LDAP_MANAGER_CONFIG
+              value: {{ include "ldap-manager.configFile" . | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- $secretName := include "ldap-manager.secretName" . }}
+          {{- if or $secretName .Values.extraEnvFrom }}
+          # Bind passwords arrive as environment variables named by the config
+          # (LDAP_MANAGER_CLUSTER_<NAME>_PASSWORD). envFrom makes every key in
+          # the Secret an env var, so the chart never has to know cluster names.
+          envFrom:
+            {{- if $secretName }}
+            - secretRef:
+                name: {{ $secretName }}
+            {{- end }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: {{ .Values.config.mountPath | quote }}
+              readOnly: true
+            # UI-owned cluster overlay. config.yml is never written to.
+            - name: data
+              mountPath: /app/.data
+            # Fernet key, password cache, local users, session signing key.
+            - name: secrets
+              mountPath: /app/.secrets
+            - name: cache
+              mountPath: /app/.cache
+            - name: tmp
+              mountPath: /tmp
+            {{- $secretName := include "ldap-manager.secretName" . }}
+            {{- if and $secretName .Values.secrets.mountPath }}
+            - name: secret-files
+              mountPath: {{ .Values.secrets.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ldap-manager.configMapName" . }}
+        - name: data
+          {{- if .Values.persistence.data.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.data.existingClaim }}
+          {{- else if .Values.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ldap-manager.dataClaimName" . }}
+          {{- else }}
+          # No persistence: clusters added in the UI are lost on restart.
+          emptyDir: {}
+          {{- end }}
+        - name: secrets
+          {{- if .Values.persistence.secrets.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.secrets.existingClaim }}
+          {{- else if .Values.persistence.secrets.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ldap-manager.secretsClaimName" . }}
+          {{- else }}
+          # No persistence: cached passwords, local users and the session key go
+          # away on every restart.
+          emptyDir: {}
+          {{- end }}
+        - name: cache
+          {{- if .Values.persistence.cache.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.cache.existingClaim }}
+          {{- else if .Values.persistence.cache.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ldap-manager.cacheClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- $secretName := include "ldap-manager.secretName" . }}
+        {{- if and $secretName .Values.secrets.mountPath }}
+        - name: secret-files
+          secret:
+            secretName: {{ $secretName }}
+            defaultMode: 0400
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

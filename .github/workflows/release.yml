@@ -1,0 +1,180 @@
+name: release
+
+# Pushing a tag publishes the chart. gh-pages becomes the `helm repo add`
+# endpoint and the .tgz is attached to a GitHub Release:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag carries the CHART version, which is independent of appVersion (the
+# LDAP Manager release, and what image.tag defaults to). A chart-only fix for
+# the same app release gets its own chart version, e.g. v0.1.1.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: publish chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.17.1
+
+      - name: Check the tag, the chart version and the image agree
+        id: meta
+        run: |
+          set -euo pipefail
+          ref="${{ inputs.tag || github.ref_name }}"
+          tag="${ref#v}"
+          version=$(helm show chart . | awk '/^version:/ {print $2}' | tr -d '"')
+          app_version=$(helm show chart . | awk '/^appVersion:/ {print $2}' | tr -d '"')
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+
+          # Tag and chart version must agree, or the repository serves a version
+          # nobody tagged.
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${ref} does not match Chart.yaml version ${version}"
+            exit 1
+          fi
+
+          # image.tag defaults to appVersion, so never publish a dangling tag.
+          docker manifest inspect "vibhuvioio/ldap-manager:${app_version}" >/dev/null \
+            || { echo "::error::vibhuvioio/ldap-manager:${app_version} is not on Docker Hub"; exit 1; }
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "app_version=$app_version"
+            echo "url=https://${owner}.github.io/${repo}"
+          } >> "$GITHUB_OUTPUT"
+          echo "publishing ldap-manager-${version} for LDAP Manager ${app_version}"
+
+      - name: helm lint --strict
+        run: helm lint . --strict
+
+      - name: Package and update gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REPO_URL: ${{ steps.meta.outputs.url }}
+        run: |
+          set -euo pipefail
+          helm package . --destination .cr-release-packages
+
+          # What Artifact Hub and `helm install` unpack. Everything repository
+          # level must be absent: .helmignore is what keeps it out.
+          echo "==> packaged contents"
+          tar -tzf .cr-release-packages/*.tgz | sort
+          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/Chart.yaml" \
+            || { echo "::error::the package has no Chart.yaml"; exit 1; }
+          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/README.md" \
+            || { echo "::error::the package has no README.md (Artifact Hub renders it)"; exit 1; }
+          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/LICENSE" \
+            || { echo "::error::the package has no LICENSE"; exit 1; }
+          if tar -tzf .cr-release-packages/*.tgz | grep -qE "artifacthub-repo\.yml|ct\.yaml|\.github/"; then
+            echo "::error::repository plumbing leaked into the chart package"
+            exit 1
+          fi
+
+          # An orphan gh-pages branch on first run; a clone after that. The clone
+          # brings the previous .tgz files along, which is what keeps older
+          # versions installable after the index is regenerated.
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          rm -rf /tmp/gh-pages
+          if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch gh-pages "$remote" /tmp/gh-pages
+          else
+            mkdir -p /tmp/gh-pages
+            git -C /tmp/gh-pages init --quiet -b gh-pages
+            git -C /tmp/gh-pages remote add origin "$remote"
+          fi
+
+          cp .cr-release-packages/*.tgz /tmp/gh-pages/
+
+          # artifacthub-repo.yml is optional for a Helm repository served over
+          # HTTP; it is what enables the ownership claim and the verified
+          # publisher badge. It must sit next to index.yaml. While the
+          # placeholders are still in it, publish nothing rather than an invalid
+          # metadata file - Artifact Hub would report the repository as broken.
+          if grep -q "REPLACE-WITH" artifacthub-repo.yml; then
+            echo "artifacthub-repo.yml still carries placeholders; not publishing it"
+            echo "See CONTRIBUTING.md -> Registering with Artifact Hub."
+          else
+            cp artifacthub-repo.yml /tmp/gh-pages/
+          fi
+
+          helm repo index /tmp/gh-pages --url "$REPO_URL"
+
+          # A Helm repository has index.yaml, not index.html, so the Pages root
+          # 404s. This landing page is copied on every release, so edit the file
+          # in hack/ rather than the branch.
+          cp hack/gh-pages-index.html /tmp/gh-pages/index.html
+
+          git -C /tmp/gh-pages config user.name "github-actions[bot]"
+          git -C /tmp/gh-pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/gh-pages add -A
+          git -C /tmp/gh-pages commit --quiet -m "chore: publish ldap-manager-${VERSION}"
+          git -C /tmp/gh-pages push --quiet origin gh-pages
+          echo "gh-pages now serves:"
+          helm show chart .cr-release-packages/*.tgz
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" .cr-release-packages/*.tgz \
+            --title "ldap-manager-${VERSION}" --generate-notes
+
+      - name: The published chart is installable
+        run: |
+          set -euo pipefail
+          url="${{ steps.meta.outputs.url }}"
+          version="${{ steps.meta.outputs.version }}"
+
+          # Poll for THIS VERSION, not for the repository being reachable.
+          # Pages keeps serving the previous index.yaml for minutes after a
+          # push, and `helm repo add` succeeds happily against that stale copy.
+          ok=false
+          for _ in $(seq 1 30); do
+            # --force-update, not plain add: once the repo exists, `helm repo add`
+            # is a no-op and the loop would keep testing the index it cached on
+            # the first iteration, which is the stale one it is meant to wait out.
+            helm repo add --force-update vibhuvioio-ldap-manager "$url" >/dev/null 2>&1 || true
+            if helm show chart vibhuvioio-ldap-manager/ldap-manager --version "$version" >/dev/null 2>&1; then
+              ok=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ok" != true ]; then
+            echo "::error::${url} never served ldap-manager ${version}."
+            echo "::error::If this is the first release, enable Settings -> Pages (branch: gh-pages, /)."
+            exit 1
+          fi
+
+          helm search repo vibhuvioio-ldap-manager/ldap-manager --versions --devel | head -5
+          helm template smoke vibhuvioio-ldap-manager/ldap-manager --version "$version" >/dev/null
+          echo "ldap-manager-${version} installs from the published repository"

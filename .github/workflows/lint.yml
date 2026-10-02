@@ -1,0 +1,342 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  helm:
+    name: helm lint and render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.17.1
+
+      # --strict turns a lint warning into a failure. The chart renders without
+      # values and needs no credential, so there is nothing to inject here.
+      - name: helm lint --strict (defaults)
+        run: helm lint . --strict
+
+      # The default render only covers one branch of every conditional.
+      - name: helm lint --strict (value permutations)
+        run: |
+          set -euo pipefail
+
+          # Existing Secret, the recommended shape.
+          helm lint . --strict --set secrets.existingSecret=ldap-manager-secrets
+
+          # Chart-managed Secret, mounted as files for credential.source: file.
+          helm lint . --strict \
+            --set secrets.create=true \
+            --set secrets.env.LDAP_MANAGER_SECRET_KEY=ci \
+            --set secrets.mountPath=/etc/ldap-manager-secrets
+
+          # An operator-managed ConfigMap, and no rendered ConfigMap at all.
+          helm lint . --strict --set config.existingConfigMap=ldap-manager-config
+
+          # Verbatim config.yml plus the free-form tail. Single-line flow
+          # mappings keep this in one shell word; the chart runs the value
+          # through tpl, which is the branch being exercised.
+          helm lint . --strict \
+            --set config.content="auth: {mode: none}" \
+            --set config.extra="ui: {title: lab}"
+
+          # Ingress, sub-path, CORS, extra schedules and volumes.
+          helm lint . --strict \
+            --set ingress.enabled=true --set ingress.className=nginx \
+            --set 'ingress.hosts[0].host=ldap-manager.example.com' \
+            --set 'ingress.hosts[0].paths[0].path=/' \
+            --set 'ingress.hosts[0].paths[0].pathType=Prefix' \
+            --set 'ingress.tls[0].secretName=ldap-manager-tls' \
+            --set 'ingress.tls[0].hosts[0]=ldap-manager.example.com' \
+            --set contextPath=/ldap-manager \
+            --set allowedOrigins=https://ldap-manager.example.com \
+            --set persistence.cache.enabled=true \
+            --set 'nodeSelector.kubernetes\.io/os=linux' \
+            --set 'tolerations[0].key=dedicated' \
+            --set 'tolerations[0].operator=Exists' \
+            --set 'imagePullSecrets[0].name=registry'
+
+          # No persistence at all: both claims become emptyDir.
+          helm lint . --strict \
+            --set persistence.data.enabled=false \
+            --set persistence.secrets.enabled=false
+
+          # More than one replica is only legal with shared state (RWX) and a
+          # session key; the guard in _helpers.tpl is what enforces it.
+          helm lint . --strict \
+            --set replicaCount=2 \
+            --set persistence.data.accessModes[0]=ReadWriteMany \
+            --set persistence.secrets.accessModes[0]=ReadWriteMany \
+            --set secrets.existingSecret=ldap-manager-secrets
+
+          # Name overrides.
+          helm lint . --strict --set nameOverride=lm --set fullnameOverride=lm
+
+      - name: The multi-replica guard is not a no-op
+        run: |
+          set -euo pipefail
+
+          # Two replicas over the default ReadWriteOnce claims must be refused:
+          # every pod would mount the same volume, and the second one deadlocks.
+          if helm template t . --set replicaCount=2 >/dev/null 2>&1; then
+            echo "::error::chart rendered replicaCount=2 against ReadWriteOnce claims"
+            exit 1
+          fi
+          # Captured, not piped: `grep -q` exits on the first match and closes
+          # the pipe, and `pipefail` then reports helm's SIGPIPE (141) as the
+          # failure instead of the reason.
+          rendered=$(helm template t . --set replicaCount=2 2>&1 || true)
+          grep -q "ReadWriteOnce" <<<"$rendered" \
+            || { echo "::error::replicaCount=2 failed for the wrong reason"; echo "$rendered"; exit 1; }
+
+          # RWX is not enough on its own: without a shared session key every
+          # replica signs sessions the others reject.
+          if helm template t . \
+              --set replicaCount=2 \
+              --set persistence.data.accessModes[0]=ReadWriteMany \
+              --set persistence.secrets.accessModes[0]=ReadWriteMany \
+              --set persistence.secrets.enabled=false >/dev/null 2>&1; then
+            echo "::error::chart rendered replicaCount=2 with no shared session key"
+            exit 1
+          fi
+
+          # And the legal combination does render.
+          helm template t . \
+            --set replicaCount=2 \
+            --set persistence.data.accessModes[0]=ReadWriteMany \
+            --set persistence.secrets.accessModes[0]=ReadWriteMany \
+            --set secrets.existingSecret=ldap-manager-secrets >/dev/null
+          echo "OK"
+
+      - name: Render every permutation
+        run: |
+          set -euo pipefail
+
+          helm template t . > /tmp/render-default.yaml
+
+          helm template t . \
+            --set secrets.existingSecret=ldap-manager-secrets \
+            --set 'config.clusters[0].name=example-cluster' \
+            --set 'config.clusters[0].host=ldap.example.com' \
+            --set 'config.clusters[0].bind_dn=cn=admin,dc=example,dc=com' \
+            --set 'config.clusters[0].base_dn=dc=example,dc=com' \
+            --set 'config.clusters[0].credential.source=env' \
+            > /tmp/render-secret.yaml
+
+          helm template t . \
+            --set secrets.create=true --set secrets.env.LDAP_MANAGER_SECRET_KEY=ci \
+            --set secrets.mountPath=/etc/ldap-manager-secrets \
+            --set ingress.enabled=true --set ingress.className=nginx \
+            --set 'ingress.hosts[0].host=ldap-manager.example.com' \
+            --set 'ingress.hosts[0].paths[0].path=/' \
+            --set 'ingress.hosts[0].paths[0].pathType=Prefix' \
+            --set 'ingress.tls[0].secretName=ldap-manager-tls' \
+            --set 'ingress.tls[0].hosts[0]=ldap-manager.example.com' \
+            --set contextPath=/ldap-manager \
+            --set allowedOrigins=https://ldap-manager.example.com \
+            --set persistence.cache.enabled=true \
+            > /tmp/render-full.yaml
+
+          helm template t . \
+            --set persistence.data.enabled=false \
+            --set persistence.secrets.enabled=false \
+            --set config.existingConfigMap=ldap-manager-config \
+            > /tmp/render-minimal.yaml
+
+          helm template t . \
+            --set replicaCount=2 \
+            --set persistence.data.accessModes[0]=ReadWriteMany \
+            --set persistence.secrets.accessModes[0]=ReadWriteMany \
+            --set secrets.existingSecret=ldap-manager-secrets \
+            > /tmp/render-ha.yaml
+
+      - name: Validate every rendered manifest against the Kubernetes schemas
+        run: |
+          set -euo pipefail
+          for f in /tmp/render-*.yaml; do
+            echo "==> $f"
+            docker run --rm -i ghcr.io/yannh/kubeconform:v0.6.7 \
+              -strict -summary -kubernetes-version 1.30.0 < "$f"
+          done
+
+      # This chart embeds no shell: there is no `command:`/`args:` script in
+      # templates/, so the sibling repo's shellcheck step has nothing to check
+      # here. The invariants below are what replaces it.
+      - name: The rendered objects keep the chart's promises
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+
+          def load(path):
+              with open(path) as fh:
+                  return [d for d in yaml.safe_load_all(fh) if d]
+
+          def kind(docs, name):
+              return next(d for d in docs if d["kind"] == name)
+
+          failures = []
+          def check(ok, message):
+              print(("  ok   " if ok else "  FAIL ") + message)
+              if not ok:
+                  failures.append(message)
+
+          # ---- defaults -----------------------------------------------------
+          docs = load("/tmp/render-default.yaml")
+          pod = kind(docs, "Deployment")["spec"]["template"]
+          container = pod["spec"]["containers"][0]
+
+          mounts = {m["name"]: m for m in container["volumeMounts"]}
+          check("config" in mounts, "the config volume is mounted")
+          # A subPath file mount never sees ConfigMap updates; the app re-reads
+          # config.yml on every request, so the directory mount is the point.
+          check(all("subPath" not in m for m in container["volumeMounts"]),
+                "no volumeMount uses subPath")
+          env = {e["name"]: e.get("value") for e in container["env"]}
+          check(env.get("LDAP_MANAGER_CONFIG") == "/etc/ldap-manager/config.yml",
+                "LDAP_MANAGER_CONFIG points at the file inside the mount")
+
+          # /health returns 503 when a managed cluster is down, so probing it
+          # would evict the only pod during an LDAP outage.
+          for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
+              path = container[probe]["httpGet"]["path"]
+              check(path == "/api/auth/status", f"{probe} probes {path}")
+
+          check(pod["spec"]["automountServiceAccountToken"] is False,
+                "no service-account token is projected")
+          check(pod["spec"]["enableServiceLinks"] is False,
+                "service links are off (no <SERVICE>_PORT collisions)")
+          check(pod["spec"]["securityContext"]["runAsNonRoot"] is True,
+                "pods run as non-root")
+          check(pod["spec"]["securityContext"]["fsGroup"] == 1000
+                and pod["spec"]["securityContext"]["runAsUser"] == 1000,
+                "fsGroup matches runAsUser, so the app can write 0600 state files")
+          check(container["securityContext"]["allowPrivilegeEscalation"] is False,
+                "privilege escalation is off")
+
+          strategy = kind(docs, "Deployment")["spec"]["strategy"]
+          check(strategy["rollingUpdate"]["maxSurge"] == 0,
+                "maxSurge is 0, so a new pod cannot fight the old one for an RWO claim")
+
+          # helm install --wait computes expectedReady = replicas - maxUnavailable,
+          # which is 0 here, so it cannot gate readiness. Nothing may regress the
+          # documented reason: a surge pod would need the same RWO volume.
+          check(kind(docs, "Deployment")["spec"]["replicas"] == 1,
+                "the default is a single replica")
+
+          pvcs = sorted(d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim")
+          # Names carry the release name, so assert on the suffix, not on the
+          # name the release happens to produce.
+          check(len(pvcs) == 2 and pvcs[0].endswith("-data") and pvcs[1].endswith("-secrets"),
+                f"default claims are data + secrets ({pvcs})")
+          check(not any(d["kind"] == "Secret" for d in docs),
+                "no Secret is rendered without secrets.create")
+
+          # ---- existing Secret ---------------------------------------------
+          docs = load("/tmp/render-secret.yaml")
+          container = kind(docs, "Deployment")["spec"]["template"]["spec"]["containers"][0]
+          sources = container.get("envFrom") or []
+          check(any(s.get("secretRef", {}).get("name") == "ldap-manager-secrets" for s in sources),
+                "secrets.existingSecret becomes an envFrom secretRef")
+          cm = kind(docs, "ConfigMap")
+          config = cm["data"]["config.yml"]
+          check("name: example-cluster" in config, "config.yml carries the cluster entries")
+          check("source: env" in config, "config.yml carries the credential source")
+
+          # ---- everything on -------------------------------------------------
+          docs = load("/tmp/render-full.yaml")
+          kinds = {d["kind"] for d in docs}
+          for want in ("Deployment", "Service", "ConfigMap", "Secret", "Ingress",
+                       "ServiceAccount", "PersistentVolumeClaim"):
+              check(want in kinds, f"full render includes a {want}")
+          container = kind(docs, "Deployment")["spec"]["template"]["spec"]["containers"][0]
+          check(any(m["name"] == "secret-files" for m in container["volumeMounts"]),
+                "secrets.mountPath mounts the Secret as files")
+          pvcs = {d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim"}
+          check(any(name.endswith("-cache") for name in pvcs),
+                "persistence.cache.enabled adds the cache claim")
+
+          # ---- no persistence, operator ConfigMap ----------------------------
+          docs = load("/tmp/render-minimal.yaml")
+          check(not any(d["kind"] == "ConfigMap" for d in docs),
+                "config.existingConfigMap renders no ConfigMap")
+          check(not any(d["kind"] == "PersistentVolumeClaim" for d in docs),
+                "persistence.*.enabled=false renders no claim")
+          volumes = {v["name"]: v for v in kind(docs, "Deployment")["spec"]["template"]["spec"]["volumes"]}
+          check("emptyDir" in volumes["data"] and "emptyDir" in volumes["secrets"],
+                "disabled persistence falls back to emptyDir")
+
+          # ---- HA ------------------------------------------------------------
+          docs = load("/tmp/render-ha.yaml")
+          check(kind(docs, "Deployment")["spec"]["replicas"] == 2, "replicaCount reaches the Deployment")
+          check(any(d["kind"] == "PodDisruptionBudget" for d in docs),
+                "a PodDisruptionBudget appears above one replica")
+
+          if failures:
+              print(f"\n{len(failures)} invariant(s) failed")
+              sys.exit(1)
+          print("\nevery rendered invariant holds")
+          PY
+
+      - name: Chart metadata is complete and consistent
+        run: |
+          set -euo pipefail
+          api_version=$(helm show chart . | awk '/^apiVersion:/ {print $2}')
+          [ "$api_version" = "v2" ] || { echo "::error::apiVersion is $api_version"; exit 1; }
+
+          # appVersion is what image.tag defaults to, so a typo here is
+          # ImagePullBackOff in every cluster that installs the chart.
+          app_version=$(helm show chart . | awk '/^appVersion:/ {print $2}' | tr -d '"')
+          echo "appVersion=$app_version"
+          docker manifest inspect "vibhuvioio/ldap-manager:${app_version}" >/dev/null \
+            || { echo "::error::vibhuvioio/ldap-manager:${app_version} does not exist on Docker Hub"; exit 1; }
+
+          # Artifact Hub rejects a repository it cannot parse, and it reads these
+          # annotations from the packaged chart.
+          python3 - <<'PY'
+          import subprocess, sys, yaml
+
+          chart = yaml.safe_load(subprocess.run(["helm", "show", "chart", "."],
+                                                capture_output=True, text=True, check=True).stdout)
+          failures = []
+          def need(ok, message):
+              print(("  ok   " if ok else "  FAIL ") + message)
+              if not ok:
+                  failures.append(message)
+
+          for field in ("description", "home", "icon", "kubeVersion", "keywords", "sources", "maintainers"):
+              need(bool(chart.get(field)), f"Chart.yaml sets {field}")
+          need(any(m.get("name") for m in chart.get("maintainers") or []),
+               "each maintainer has a name")
+
+          annotations = chart.get("annotations") or {}
+          for key, value in annotations.items():
+              need(key.startswith("artifacthub.io/"), f"annotation {key} is namespaced")
+              try:
+                  yaml.safe_load(value)
+              except yaml.YAMLError as exc:
+                  need(False, f"annotation {key} is not valid YAML: {exc}")
+                  continue
+              need(True, f"annotation {key} parses as YAML")
+
+          changes = yaml.safe_load(annotations.get("artifacthub.io/changes", "[]")) or []
+          need(all(set(c) >= {"kind", "description"} for c in changes),
+               "every artifacthub.io/changes entry has kind and description")
+          images = yaml.safe_load(annotations.get("artifacthub.io/images", "[]")) or []
+          need(all(i.get("image", "").startswith("vibhuvioio/") for i in images),
+               "artifacthub.io/images names the published image")
+
+          if failures:
+              print(f"\n{len(failures)} metadata problem(s)")
+              sys.exit(1)
+          print("chart metadata is complete")
+          PY

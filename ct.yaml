@@ -1,0 +1,30 @@
+# chart-testing configuration - https://github.com/helm/chart-testing
+#
+# The chart lives at the repository root (Chart.yaml at the top level, the
+# openldap-helmchart convention). There are no dependencies, so no `charts/`
+# directory and no Chart.lock are committed.
+remote: origin
+target-branch: main
+# The workflow passes `--charts .`, NOT `--all`. chart-testing finds a chart by
+# walking the SUBDIRECTORIES of each chart-dir, so a chart sitting at the
+# chart-dir root is invisible to it: with `chart-dirs: [.]`, `--all` prints
+# "No chart changes detected." and exits 0 without linting anything. `--charts .`
+# takes the path directly and lints the one chart that exists. Verified against
+# chart-testing 3.14.0. chart-dirs is kept because it is what `ct list-changed`
+# uses.
+chart-dirs:
+  - .
+chart-repos: []
+helm-extra-args: --timeout 5m
+# The chart version is enforced against the release tag by release.yml
+# (tag == Chart.yaml version). Leaving this on makes the linter demand a version
+# bump for README and workflow edits, and with `--charts` there is no target
+# branch to compare against anyway.
+check-version-increment: false
+# `ct lint --validate-maintainers` does an HTTP HEAD on
+# https://github.com/<maintainer name>, and Chart.yaml names a person
+# ("Jinna Baalu", 404) rather than an account. Disabled here rather than
+# rewriting the maintainer's identity to satisfy a linter. Drop this line if
+# maintainers are ever switched to account names (github.com/JinnaBaalu and
+# github.com/VibhuviOiO both resolve).
+validate-maintainers: false

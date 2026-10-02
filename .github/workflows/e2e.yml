@@ -1,0 +1,62 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # The image and Kubernetes both move without this repository changing.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  k3s:
+    name: install, probes and state on k3s
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # hack/e2e-local.sh starts k3s itself when nothing answers on this file.
+      KUBECONFIG: /tmp/ldap-manager-k3s.yaml
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.17.1
+
+      # Every assertion lives in the script, so CI runs exactly what a
+      # maintainer runs locally - and a failing check can be reproduced with one
+      # command instead of by reading a workflow.
+      #
+      # It installs the chart, waits for the pod, checks both claims bound, that
+      # config.yml is a directory mount, that the probes are app-local, that the
+      # Secret arrives as environment variables, that a ConfigMap edit reaches
+      # the pod without a restart, that an upgrade and an uninstall/reinstall
+      # keep /app/.data, and that a foreign release cannot adopt a kept claim.
+      - name: Install the chart and assert what it promises
+        run: bash hack/e2e-local.sh
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get all,pvc -A || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -40 || true
+          # `-o name` prints "pod/<name>" with no namespace even under -A.
+          pods=$(kubectl get pods -A -l app.kubernetes.io/name=ldap-manager \
+            -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}')
+          while read -r pod; do
+            [ -n "$pod" ] || continue
+            ns=${pod%%/*}
+            name=${pod##*/}
+            echo "===== $pod ====="
+            kubectl -n "$ns" describe "pod/$name" | tail -40 || true
+            kubectl -n "$ns" logs "pod/$name" --tail=100 || true
+          done <<<"$pods"
+
+      - name: Tear the cluster down
+        if: always()
+        run: docker rm -f k3s-ldap-manager || true

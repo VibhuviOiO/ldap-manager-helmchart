@@ -1,0 +1,318 @@
+# LDAP Manager. The app is stateless except for two directories that are not:
+#   /app/.data     UI-owned cluster overlay (clusters.yml)
+#   /app/.secrets  Fernet key, encrypted bind-password cache, local users, session key
+# Both default to a PersistentVolumeClaim. Do not disable them in production:
+# losing /app/.secrets invalidates cached passwords and any local accounts.
+
+# One replica is the safe default. See persistence.* and the HA section of the
+# README before raising it: the two state directories are ReadWriteOnce by
+# default, and sessions are HMAC-signed with a key stored in /app/.secrets.
+replicaCount: 1
+
+image:
+  # Docker Hub primary, ghcr.io/vibhuvioio/ldap-manager mirror.
+  repository: vibhuvioio/ldap-manager
+  # Empty = .Chart.AppVersion, which is the LDAP Manager release.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # Defaults to the fullname.
+  name: ""
+
+# ---------------------------------------------------------------- application
+
+# Prefix the app is served under, e.g. /ldap-manager behind
+# https://example.com/ldap-manager. Empty means "/".
+contextPath: ""
+
+# Comma-separated origins allowed to call the API. Empty leaves the app default
+# (http://localhost:5173), which is wrong for anything but a lab. Set this to
+# the public origin of the UI, e.g. https://ldap.example.com. Never "*".
+allowedOrigins: ""
+
+logLevel: INFO
+jsonLogs: true
+
+# Extra environment variables, e.g.
+#   - name: VITE_FOOTER_TEXT
+#     value: "LDAP Manager"
+extraEnv: []
+# Extra envFrom sources (ConfigMap/Secret refs).
+extraEnvFrom: []
+
+# ------------------------------------------------------------------- config.yml
+
+config:
+  # Preferred in GitOps: a ConfigMap you manage outside the release. The chart
+  # then renders no ConfigMap and mounts this one instead.
+  existingConfigMap: ""
+  # Key inside the ConfigMap, and the file name inside config.mountPath.
+  key: config.yml
+  # Directory the ConfigMap is mounted at, read-only. The Deployment sets
+  # LDAP_MANAGER_CONFIG=<mountPath>/<key>. Mounting the directory (not a
+  # subPath file) is deliberate: config.yml is re-read on every request, but a
+  # subPath mount never sees ConfigMap updates, so an edit would need a restart.
+  mountPath: /etc/ldap-manager
+
+  # Verbatim config.yml override, rendered through tpl. When set, the structured
+  # auth/clusters/extra values below are ignored.
+  content: ""
+
+  auth:
+    # none | local | ldap
+    #   none   a reverse proxy / SSO already authenticated the user
+    #   local  built-in accounts, created in a first-run wizard
+    #   ldap   one of the clusters below authenticates users
+    mode: none
+    # Role for a visitor who is not signed in. readonly | readwrite | admin
+    defaultRole: readonly
+    sessionLifetimeHours: 12
+    # Free-form block used only when mode: ldap. Mirrors auth.ldap from
+    # config.example.yml, e.g.
+    #   cluster: example-cluster
+    #   user_dn_template: "uid={username},ou=People,dc=example,dc=com"
+    #   role_map:
+    #     default: readonly
+    #     groups:
+    #       "cn=ldap-admins,ou=Group,dc=example,dc=com": admin
+    ldap: {}
+
+  # Clusters to manage. Keys are the config.yml schema verbatim, so a block can
+  # be pasted from the app's config.example.yml. Nothing here is invented:
+  # replace every placeholder with your own directory's details.
+  clusters: []
+  #  - name: example-cluster
+  #    host: ldap.example.com            # single node; omit `host` when using
+  #                                      # `nodes` (exactly one, never both)
+  #    # nodes:                          # multi-master cluster
+  #    #   - host: ldap1.example.com
+  #    #     port: 389
+  #    #   - host: ldap2.example.com
+  #    #     port: 389
+  #    port: 389
+  #    bind_dn: cn=admin,dc=example,dc=com
+  #    base_dn: dc=example,dc=com
+  #    description: Example LDAP cluster
+  #    readonly: false
+  #    # stored (default) | env | file | prompt | config
+  #    # env reads $LDAP_MANAGER_CLUSTER_EXAMPLE_CLUSTER_PASSWORD, i.e. the
+  #    # cluster name upper-cased with every non-alphanumeric run replaced by _.
+  #    credential:
+  #      source: env
+  #    # tls:
+  #    #   mode: ldaps                   # none | ldaps | starttls
+  #    #   ca_file: /etc/ldap-manager-certs/ca.crt
+  #    #   verify: true
+  #    # config:
+  #    #   bind_dn: cn=config            # needs its own credential, source: env
+  #    #   credential:
+  #    #     source: env                 # $LDAP_MANAGER_CONFIG_EXAMPLE_CLUSTER_PASSWORD
+  #    # user_creation_form:
+  #    #   base_ou: ou=People,dc=example,dc=com
+
+  # Appended verbatim to the rendered config.yml, for keys the structured values
+  # above do not model.
+  extra: ""
+
+# ------------------------------------------------------------------- secrets
+
+secrets:
+  # Preferred: an existing Secret. Every key becomes an environment variable, so
+  # a key named LDAP_MANAGER_CLUSTER_<NAME>_PASSWORD reaches the app without the
+  # chart ever seeing the value.
+  #
+  #   kubectl -n directory create secret generic ldap-manager-secrets \
+  #     --from-literal=LDAP_MANAGER_CLUSTER_EXAMPLE_CLUSTER_PASSWORD='...' \
+  #     --from-literal=LDAP_MANAGER_CONFIG_EXAMPLE_CLUSTER_PASSWORD='...' \
+  #     --from-literal=LDAP_MANAGER_SECRET_KEY="$(openssl rand -hex 32)"
+  existingSecret: ""
+
+  # Chart-managed Secret, used only when existingSecret is empty. Convenient for
+  # a lab; the values still live in `helm get values` / the release Secret.
+  create: false
+  env: {}
+  #  LDAP_MANAGER_CLUSTER_EXAMPLE_CLUSTER_PASSWORD: "change-me"
+  #  LDAP_MANAGER_CONFIG_EXAMPLE_CLUSTER_PASSWORD: "change-me"
+  #  # Set this to make sessions verify across replicas without sharing /app/.secrets.
+  #  LDAP_MANAGER_SECRET_KEY: "change-me"
+
+  # When set, the Secret above is also mounted read-only at this path, for
+  # clusters using credential.source: file. Paths then look like
+  # /etc/ldap-manager-secrets/example-cluster.
+  mountPath: ""
+
+# ------------------------------------------------------------------- persistence
+
+# Claims the chart renders carry `helm.sh/resource-policy: keep`, so
+# `helm uninstall` leaves them (and the data) behind instead of deleting them
+# with the rest of the release. Losing /app/.secrets would invalidate the
+# encrypted bind-password cache, the Fernet key, any built-in local accounts and
+# the session signing key. Remove a claim deliberately with
+# `kubectl delete pvc <release>-ldap-manager-data`.
+#
+# A reinstall under the SAME release name and namespace adopts the kept claim, so
+# the data survives an uninstall/reinstall cycle. A different release name whose
+# rendered names collide (a fullnameOverride, typically) is refused by Helm's
+# ownership check - delete the claim first, or keep the release name.
+persistence:
+  # /app/.data - clusters added or edited in the UI (clusters.yml).
+  data:
+    enabled: true
+    # Use a claim you created yourself instead of one the chart creates.
+    existingClaim: ""
+    size: 1Gi
+    accessModes: ["ReadWriteOnce"]
+    # Empty = the cluster default StorageClass.
+    storageClass: ""
+    annotations: {}
+  # /app/.secrets - Fernet key, encrypted password cache, local users, session key.
+  secrets:
+    enabled: true
+    existingClaim: ""
+    size: 1Gi
+    accessModes: ["ReadWriteOnce"]
+    storageClass: ""
+    annotations: {}
+  # /app/.cache - encrypted password cache. Rebuilt on demand, so an emptyDir is
+  # the default; a lost cache only means users re-enter a bind password. Enable
+  # it if you would rather not.
+  cache:
+    enabled: false
+    existingClaim: ""
+    size: 1Gi
+    accessModes: ["ReadWriteOnce"]
+    storageClass: ""
+    annotations: {}
+
+# ------------------------------------------------------------------- networking
+
+service:
+  type: ClusterIP
+  port: 8000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #  nginx.ingress.kubernetes.io/proxy-body-size: 16m
+  hosts: []
+  #  - host: ldap-manager.example.com
+  #    paths:
+  #      - path: /
+  #        pathType: Prefix
+  tls: []
+  #  - secretName: ldap-manager-tls
+  #    hosts:
+  #      - ldap-manager.example.com
+
+# ------------------------------------------------------------------- probes
+
+# The app has two useful endpoints and they mean different things:
+#   /api/auth/status  200 whenever the process is serving. App-local.
+#   /health           200 only when config.yml parses AND every checked LDAP
+#                     cluster answers. "degraded" (a managed directory being
+#                     down) returns 503.
+# Defaults probe the app-local endpoint on purpose: with one replica, readiness
+# on /health removes the only pod from the Service during an LDAP outage, so the
+# UI you would use to diagnose it becomes unreachable. Point readiness.path (and
+# liveness.path) at /health only when you want traffic gated on LDAP health and
+# you run more than one replica.
+probes:
+  startup:
+    enabled: true
+    path: /api/auth/status
+    failureThreshold: 30
+    periodSeconds: 5
+  readiness:
+    enabled: true
+    path: /api/auth/status
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  liveness:
+    enabled: true
+    path: /api/auth/status
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# ------------------------------------------------------------------- rollout
+
+# maxSurge 0 is deliberate: the state volumes are ReadWriteOnce, so a surge pod
+# would fight the old one for the same claim. The old pod stops before the new
+# one starts.
+#
+# Consequence worth knowing before you trust a CI gate: Helm computes
+#     expectedReady = replicas - maxUnavailable
+# for a Deployment, so with one replica and maxUnavailable 1 that is 0 and
+# `helm install --wait` / `helm upgrade --wait` return as soon as the ReplicaSet
+# exists - before the pod is Ready. `--atomic` cannot roll a bad release back
+# either. Gate on `kubectl rollout status deploy/<release>` instead, which is
+# what hack/e2e-local.sh and the workflows do.
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+terminationGracePeriodSeconds: 30
+
+# ------------------------------------------------------------------- security
+
+# The image is designed to run unprivileged. If your tag runs as a different
+# uid, override runAsUser/runAsGroup/fsGroup together - they must match, because
+# the app writes 0600 files inside the volumes.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  # False by default: Python may want to write bytecode caches under /app.
+  readOnlyRootFilesystem: false
+  seccompProfile:
+    type: RuntimeDefault
+
+# ------------------------------------------------------------------- resources
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Extra volumes/mounts for cluster CA certificates (tls.ca_file) or anything
+# else the config references by path.
+extraVolumes: []
+extraVolumeMounts: []
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# At least one pod keeps serving during a node drain. No effect at one replica.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1

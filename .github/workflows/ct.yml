@@ -1,0 +1,121 @@
+name: ct
+
+# chart-testing. `ct lint` needs no cluster at all; `ct install` is the layer
+# that proves the chart actually deploys, so it runs on a kind cluster it starts
+# itself. Set the repository variable CT_INSTALL_ENABLED to "false"
+# (Settings -> Secrets and variables -> Actions -> Variables) to run lint only,
+# for example while the Docker Hub image tag is being republished.
+#
+# The full behavioural suite (probes, ConfigMap propagation, uninstall/reinstall
+# state) lives in e2e.yml, which runs hack/e2e-local.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ct lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # chart-testing resolves the chart against the target branch.
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.17.1
+
+      - uses: helm/chart-testing-action@v2
+
+      - name: ct lint
+        # `--charts .`, not `--all`: chart-testing discovers charts by walking
+        # the SUBDIRECTORIES of each chart-dir, so with `chart-dirs: [.]` a
+        # root-level chart is invisible and `--all` exits 0 without linting
+        # anything. Verified against chart-testing 3.14.0.
+        run: ct lint --config ct.yaml --charts .
+
+  install:
+    name: ct install on kind
+    runs-on: ubuntu-latest
+    needs: lint
+    if: vars.CT_INSTALL_ENABLED != 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.17.1
+
+      - uses: helm/chart-testing-action@v2
+
+      # kind, not k3s: this chart deploys a Python web app, so it has none of
+      # the containerd constraints the sibling openldap chart works around.
+      - name: Start a cluster
+        uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.31.4
+
+      - name: A cluster is reachable before ct install needs one
+        run: |
+          set -euo pipefail
+          kubectl version
+          kubectl wait --for=condition=Ready node --all --timeout=5m
+          kubectl get storageclass
+
+      # --skip-clean-up (not --skip-cleanup) leaves the release installed so the
+      # next step can look at the pod. Default values need no Secret and no
+      # cluster to manage: the Deployment starts, the probes answer, and the UI
+      # serves.
+      - name: ct install
+        run: ct install --config ct.yaml --charts . --skip-clean-up
+
+      - name: The installed pod is actually Ready
+        run: |
+          set -euo pipefail
+          # `helm install --wait` - which is what ct install uses - computes
+          #     expectedReady = replicas - maxUnavailable
+          # for a Deployment. This chart runs one replica with maxUnavailable: 1
+          # (the state volumes are ReadWriteOnce, so a surge pod would fight the
+          # old one for the same claim), so expectedReady is 0 and --wait returns
+          # as soon as the ReplicaSet exists. Readiness has to be asserted
+          # against the API server instead.
+          # `kubectl get ... -o name` prints "pod/<name>" with no namespace even
+          # under -A, so ask for both fields explicitly.
+          pods=$(kubectl get pods -A -l app.kubernetes.io/name=ldap-manager \
+            -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}')
+          if [ -z "$pods" ]; then
+            echo "::error::ct install left no ldap-manager pod behind"
+            exit 1
+          fi
+          while read -r pod; do
+            [ -n "$pod" ] || continue
+            ns=${pod%%/*}
+            name=${pod##*/}
+            kubectl -n "$ns" wait --for=condition=Ready "pod/$name" --timeout=5m
+            kubectl -n "$ns" get pod "$name" -o wide
+          done <<<"$pods"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get all,pvc -A || true
+          pods=$(kubectl get pods -A -l app.kubernetes.io/name=ldap-manager \
+            -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}')
+          while read -r pod; do
+            [ -n "$pod" ] || continue
+            ns=${pod%%/*}
+            name=${pod##*/}
+            echo "===== $pod ====="
+            kubectl -n "$ns" describe "pod/$name" | tail -40 || true
+            kubectl -n "$ns" logs "pod/$name" --tail=80 || true
+          done <<<"$pods"

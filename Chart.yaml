@@ -1,0 +1,60 @@
+apiVersion: v2
+name: ldap-manager
+description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
+type: application
+# Chart semver, independent of the image. appVersion is the LDAP Manager release
+# the chart installs, and is what image.tag defaults to.
+#
+# This repository is the chart's home: release.yml enforces tag == `version`, so
+# bump `version` for any change to templates/ or values.yaml. A new image needs
+# no chart change - appVersion picks it up.
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.24.0-0"
+# Square, vector, and already yours.
+icon: https://vibhuvioio.com/img/logo.svg
+keywords:
+  - ldap
+  - openldap
+  - ldap-manager
+  - directory
+  - identity
+  - administration
+  - web-ui
+  - dashboard
+  - management
+home: https://vibhuvioio.com/ldap-manager/
+sources:
+  - https://github.com/VibhuviOiO/ldap-manager-helmchart
+  - https://github.com/VibhuviOiO/ldap-manager
+maintainers:
+  - name: Jinna Baalu
+    url: https://github.com/VibhuviOiO
+annotations:
+  artifacthub.io/license: MIT
+  # What Artifact Hub browses by. An LDAP administration UI belongs under
+  # `security`.
+  artifacthub.io/category: security
+  artifacthub.io/images: |
+    - name: ldap-manager
+      image: vibhuvioio/ldap-manager:1.0.0
+  # Artifact Hub requires kind/description pairs here; a bare list is rejected.
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial chart - Deployment, config.yml ConfigMap, Secret wiring, PVCs for /app/.data and /app/.secrets
+    - kind: added
+      description: Ingress, startup/readiness/liveness probes on the app-local endpoint, and a hardened securityContext
+    - kind: added
+      description: PodDisruptionBudget, plus a render-time guard that refuses replicaCount > 1 against ReadWriteOnce state volumes
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://vibhuvioio.com/ldap-manager/
+    - name: Docker image
+      url: https://hub.docker.com/r/vibhuvioio/ldap-manager
+    - name: Application source
+      url: https://github.com/VibhuviOiO/ldap-manager
+    - name: Chart source
+      url: https://github.com/VibhuviOiO/ldap-manager-helmchart
+  # This chart manages OpenLDAP clusters; the openldap chart is what serves them.
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap

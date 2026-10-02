@@ -1,0 +1,10 @@
+# Helm packaging leftovers
+*.tgz
+.cr-release-packages/
+.cr-release-index/
+index.yaml
+
+# Local scratch
+*.local.yaml
+values.local.yaml
+.render/

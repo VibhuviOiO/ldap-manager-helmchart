@@ -1,0 +1,22 @@
+# Artifact Hub repository metadata.
+#
+# This file is OPTIONAL for a Helm chart repository served over HTTP: Artifact
+# Hub indexes gh-pages from index.yaml by itself. It only adds the two things
+# index.yaml cannot carry -
+#
+#   * ownership claim   proves you control this repository
+#   * verified publisher  the badge next to the package
+#
+# It must sit at the same level as index.yaml, so release.yml copies it to the
+# root of gh-pages. While the placeholders below are still present the workflow
+# skips the copy, so a half-configured file is never published.
+#
+# Both values come from Artifact Hub after you add the repository
+# (Control panel -> Repositories -> your repository):
+#
+#   repositoryID  the UUID on the repository's Settings tab
+#   owners        the name and email on your Artifact Hub account
+repositoryID: REPLACE-WITH-ARTIFACTHUB-REPOSITORY-ID
+owners:
+  - name: Jinna Baalu
+    email: REPLACE-WITH-ARTIFACTHUB-ACCOUNT-EMAIL

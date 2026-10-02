@@ -1,0 +1,19 @@
+# Everything here is repository plumbing, not chart content. `helm package`
+# honours this file, so a match means the file is absent from the .tgz that
+# Artifact Hub and `helm install` consume.
+.git
+.gitignore
+.github
+*.tmproj
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+ci/
+hack/
+CONTRIBUTING.md
+# Repository-level metadata and CI config. artifacthub-repo.yml must sit next to
+# index.yaml on gh-pages; it has no business inside the chart package.
+artifacthub-repo.yml
+ct.yaml

@@ -1,0 +1,89 @@
+{{ include "ldap-manager.name" . }} {{ .Chart.Version }} (LDAP Manager {{ .Chart.AppVersion }})
+{{ include "ldap-manager.fullname" . }} is deployed in namespace {{ .Release.Namespace }}.
+
+Reach the UI:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ldap-manager.fullname" . }} 8000:{{ .Values.service.port }}
+  # then open http://localhost:8000{{ .Values.contextPath }}
+
+{{ if .Values.ingress.enabled -}}
+Ingress is enabled; check the address the controller assigned:
+
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "ldap-manager.fullname" . }}
+{{- else -}}
+The Service is {{ .Values.service.type }}, so it is only reachable inside the
+cluster. Use the port-forward above, or set ingress.enabled=true.
+{{- end }}
+
+config.yml:
+
+{{ if .Values.config.existingConfigMap -}}
+  You supplied ConfigMap {{ .Values.config.existingConfigMap }}; the chart rendered none.
+  Mounted read-only at {{ .Values.config.mountPath }} and read via
+  LDAP_MANAGER_CONFIG={{ include "ldap-manager.configFile" . }}.
+{{- else -}}
+  Rendered into ConfigMap {{ include "ldap-manager.configMapName" . }} and mounted read-only at
+  {{ .Values.config.mountPath }}; the pod reads LDAP_MANAGER_CONFIG={{ include "ldap-manager.configFile" . }}.
+  Edit it in place - the app re-reads the file on every request, no restart:
+
+    kubectl -n {{ .Release.Namespace }} edit configmap {{ include "ldap-manager.configMapName" . }}
+
+{{- if not .Values.config.clusters }}
+  NOTE: config.clusters is empty, so the UI will show no clusters to manage.
+{{- end }}
+{{- end }}
+
+Credentials:
+
+{{ if .Values.secrets.existingSecret -}}
+  Bind passwords come from the existing Secret {{ .Values.secrets.existingSecret }} (envFrom).
+  A cluster with credential.source: env reads
+    LDAP_MANAGER_CLUSTER_<CLUSTER_NAME>_PASSWORD
+  where the cluster name is upper-cased and every run of non-alphanumeric
+  characters becomes a single underscore.
+{{- else if .Values.secrets.create -}}
+  The chart created Secret {{ include "ldap-manager.secretName" . }} from secrets.env.
+  Values live in the release, so `helm get values` shows them; prefer
+  secrets.existingSecret for anything real.
+{{- else -}}
+  WARNING: no Secret is wired up. Clusters using credential.source: env will find
+  no password. Either create one -
+
+    kubectl -n {{ .Release.Namespace }} create secret generic {{ include "ldap-manager.fullname" . }}-secrets \
+      --from-literal=LDAP_MANAGER_CLUSTER_EXAMPLE_CLUSTER_PASSWORD='...' \
+      --from-literal=LDAP_MANAGER_CONFIG_EXAMPLE_CLUSTER_PASSWORD='...' \
+      --from-literal=LDAP_MANAGER_SECRET_KEY="$(openssl rand -hex 32)"
+
+  and set secrets.existingSecret, or use credential.source: stored and enter the
+  password once in the UI (it is encrypted under /app/.secrets).
+{{- end }}
+
+Persistent state:
+
+  {{ include "ldap-manager.dataClaimName" . }}     -> /app/.data     (UI cluster overlay)
+  {{ include "ldap-manager.secretsClaimName" . }}  -> /app/.secrets  (Fernet key, cached passwords, local users)
+{{- if not .Values.persistence.cache.enabled }}
+  /app/.cache is an emptyDir: the encrypted password cache is rebuilt after a restart.
+{{- end }}
+  Both claims carry helm.sh/resource-policy: keep, so `helm uninstall` leaves
+  them (and their data) in place. Delete them deliberately when you are done:
+
+    kubectl -n {{ .Release.Namespace }} delete pvc {{ include "ldap-manager.dataClaimName" . }} {{ include "ldap-manager.secretsClaimName" . }}
+
+Rollout:
+
+  `helm install --wait` returns before this pod is Ready (one replica with
+  maxUnavailable: 1 makes Helm's expectedReady 0). Watch the rollout instead:
+
+    kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "ldap-manager.fullname" . }}
+
+Health:
+
+  curl -s localhost:8000/health           # app-reported health; 503 when config is invalid or a cluster is down
+  curl -s localhost:8000/api/auth/status  # 200 whenever the app is serving (what the probes use)
+  See the README if your image tag predates the auth API: every unknown path is
+  then answered by the SPA with 200, so a probe only proves the server is up.
+
+Logs:
+
+  kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "ldap-manager.fullname" . }}
