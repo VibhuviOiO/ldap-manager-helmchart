@@ -26,8 +26,61 @@ entries:
       artifacthub.io/recommendations: |
         - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap
     apiVersion: v2
+    appVersion: 1.1.0
+    created: "2026-10-03T01:53:08.414959341Z"
+    description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
+    digest: adcd32f56a79bce1a21be80ac694ddb38cfdbed9c37fede8b8ad4ca07ab1c03b
+    home: https://vibhuvioio.com/ldap-manager/
+    icon: https://vibhuvioio.com/img/logo.svg
+    keywords:
+    - ldap
+    - openldap
+    - ldap-manager
+    - directory
+    - identity
+    - administration
+    - web-ui
+    - dashboard
+    - management
+    kubeVersion: '>=1.24.0-0'
+    maintainers:
+    - name: Jinna Baalu
+      url: https://github.com/VibhuviOiO
+    name: ldap-manager
+    sources:
+    - https://github.com/VibhuviOiO/ldap-manager-helmchart
+    - https://github.com/VibhuviOiO/ldap-manager
+    type: application
+    urls:
+    - https://VibhuviOiO.github.io/ldap-manager-helmchart/ldap-manager-0.2.0.tgz
+    version: 0.2.0
+  - annotations:
+      artifacthub.io/category: security
+      artifacthub.io/changes: |
+        - kind: added
+          description: Initial chart - Deployment, config.yml ConfigMap, Secret wiring, PVCs for /app/.data and /app/.secrets
+        - kind: added
+          description: Ingress, startup/readiness/liveness probes on the app-local endpoint, and a hardened securityContext
+        - kind: added
+          description: PodDisruptionBudget, plus a render-time guard that refuses replicaCount > 1 against ReadWriteOnce state volumes
+      artifacthub.io/images: |
+        - name: ldap-manager
+          image: vibhuvioio/ldap-manager:1.0.0
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://vibhuvioio.com/ldap-manager/
+        - name: Docker image
+          url: https://hub.docker.com/r/vibhuvioio/ldap-manager
+        - name: Application source
+          url: https://github.com/VibhuviOiO/ldap-manager
+        - name: Chart source
+          url: https://github.com/VibhuviOiO/ldap-manager-helmchart
+      artifacthub.io/recommendations: |
+        - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap
+    apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-10-02T22:17:42.029657814Z"
+    created: "2026-10-03T01:53:08.412930695Z"
     description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
     digest: bb05dfc8b4ad9ecf77a67015f54f3a77ccd08fe40e77413bf98f9c68d4aaad44
     home: https://vibhuvioio.com/ldap-manager/
@@ -54,4 +107,4 @@ entries:
     urls:
     - https://VibhuviOiO.github.io/ldap-manager-helmchart/ldap-manager-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-02T22:17:42.028443947Z"
+generated: "2026-10-03T01:53:08.411710661Z"

@@ -1,0 +1,72 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+annotations:
+  artifacthub.io/category: security
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial chart - Deployment, config.yml ConfigMap, Secret wiring, PVCs for /app/.data and /app/.secrets
+    - kind: added
+      description: Ingress, startup/readiness/liveness probes on the app-local endpoint, and a hardened securityContext
+    - kind: added
+      description: PodDisruptionBudget, plus a render-time guard that refuses replicaCount > 1 against ReadWriteOnce state volumes
+  artifacthub.io/images: |
+    - name: ldap-manager
+      image: vibhuvioio/ldap-manager:1.0.0
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://vibhuvioio.com/ldap-manager/
+    - name: Docker image
+      url: https://hub.docker.com/r/vibhuvioio/ldap-manager
+    - name: Application source
+      url: https://github.com/VibhuviOiO/ldap-manager
+    - name: Chart source
+      url: https://github.com/VibhuviOiO/ldap-manager-helmchart
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap
+apiVersion: v2
+appVersion: 1.1.0
+description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
+home: https://vibhuvioio.com/ldap-manager/
+icon: https://vibhuvioio.com/img/logo.svg
+keywords:
+- - ldap
+- - openldap
+- - ldap-manager
+- - directory
+- - identity
+- - administration
+- - web-ui
+- - dashboard
+- - management
+kubeVersion: '>=1.24.0-0'
+maintainers:
+- - name: Jinna Baalu
+  url: https://github.com/VibhuviOiO
+name: ldap-manager
+sources:
+- - https://github.com/VibhuviOiO/ldap-manager-helmchart
+- - https://github.com/VibhuviOiO/ldap-manager
+type: application
+version: 0.2.0
+
+...
+files:
+  ldap-manager-0.2.0.tgz: sha256:adcd32f56a79bce1a21be80ac694ddb38cfdbed9c37fede8b8ad4ca07ab1c03b
+-----BEGIN PGP SIGNATURE-----
+
+wsFcBAEBCgAQBQJqwGAECRAn0q9istiGPQAAMsIQAJlrRenb3f5AkiIOMZz8sZuk
+F6w/6Z7ziz7ocZLZlO7TmDex8hN/KULfTzTqPZofKIrC/FiOP8TcR9wWDOtpw72D
+0A1Nmb/dJ2LGisSkN7GNVKRFMi6TgTGv+0ijY1B188zRAvlGLfn6JakH+h7uO1rl
+06wfQMMk+SJmrINyxWowUfUKmls15QFmM46tUX+YAGx9WurJDS3CZnEIkbXxeAm5
+9dD0pMfFByZ7n0tzz9RAiTdxOrpqkyNcdTbXm2fQOmaxfIiMLfyB84B7asPy9EPN
+ZVq4YojjPVHM7KRkowIyrHTpzY4Ho7WtT/pU+DJ5upxS7Fa7g+bWL+CCq+6heuKE
+oRk7rsMOzEEowL5+hczaf0HzsX5WjkQ8OutKyv+I/h6hSwvp1t4VhG5sscu3eqbW
+L64Zdx9MMhDO2BVbfaXnfwoWeayaZtZzuQ79ZB3rNEjAEgCkjb5OrZgRdfnTtAUo
+Ql839ifSiiz2No6WwABw4kpPLosFtJmxv2RFrdXzxvjUuvG1/oNEqIogAmOVHahG
+nem+8eLiscCDI1YED3YZQ5x/F6YHwevwTH0uWSAoUgLaep9kkvjl7rN2b9em59Nh
+fZoAybCt1T55Sh6dwwNaPlX54euKLCJclvqH0mNCrDMAM27zDMaii0J4ZMHISktV
++K2Ul+lLOH6M88RsjdCi
+=Rj3p
+-----END PGP SIGNATURE-----
