@@ -73,6 +73,22 @@ jobs:
       - name: helm lint --strict
         run: helm lint . --strict
 
+      - name: Import Helm signing key
+        env:
+          HELM_SIGNING_KEY_ASC: ${{ secrets.HELM_SIGNING_KEY_ASC }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HELM_SIGNING_KEY_ASC}" ]; then
+            echo "::error::HELM_SIGNING_KEY_ASC is not set; the chart cannot be signed"
+            exit 1
+          fi
+          echo "$HELM_SIGNING_KEY_ASC" | base64 -d > /tmp/signing.asc
+          gpg --batch --import /tmp/signing.asc
+          # helm --keyring wants the legacy secring.gpg layout, not pubring.kbx.
+          # Without this, signing fails with a misleading "private key not found".
+          gpg --export-secret-keys > /tmp/secring.gpg
+          echo "keyring: $(stat -c%s /tmp/secring.gpg 2>/dev/null || stat -f%z /tmp/secring.gpg) bytes"
+
       - name: Package and update gh-pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,7 +96,10 @@ jobs:
           REPO_URL: ${{ steps.meta.outputs.url }}
         run: |
           set -euo pipefail
-          helm package . --destination .cr-release-packages
+          # --key takes the OpenPGP USER ID (name or email), NOT the key ID
+          # or fingerprint. A key ID fails with "private key not found".
+          helm package . --destination .cr-release-packages \
+            --sign --key "${{ secrets.HELM_SIGNING_KEY }}" --keyring /tmp/secring.gpg
 
           # What Artifact Hub and `helm install` unpack. Everything repository
           # level must be absent: .helmignore is what keeps it out.
@@ -111,6 +130,9 @@ jobs:
           fi
 
           cp .cr-release-packages/*.tgz /tmp/gh-pages/
+          # The provenance file is what Artifact Hub reads to show "signed".
+          cp .cr-release-packages/*.prov /tmp/gh-pages/
+          helm verify --keyring /tmp/secring.gpg .cr-release-packages/*.tgz
 
           # artifacthub-repo.yml is optional for a Helm repository served over
           # HTTP; it is what enables the ownership claim and the verified
@@ -124,7 +146,8 @@ jobs:
             cp artifacthub-repo.yml /tmp/gh-pages/
           fi
 
-          helm repo index /tmp/gh-pages --url "$REPO_URL"
+          helm repo index /tmp/gh-pages --url "$REPO_URL" \
+            --sign --key "${{ secrets.HELM_SIGNING_KEY }}" --keyring /tmp/secring.gpg
 
           # A Helm repository has index.yaml, not index.html, so the Pages root
           # 404s. This landing page is copied on every release, so edit the file
