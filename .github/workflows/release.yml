@@ -103,15 +103,22 @@ jobs:
 
           # What Artifact Hub and `helm install` unpack. Everything repository
           # level must be absent: .helmignore is what keeps it out.
+          # Read the listing ONCE into a variable. Piping tar into `grep -q` is
+          # unsafe here: grep exits on the first match, tar keeps writing and
+          # dies with SIGPIPE (141), and `set -o pipefail` turns that into a
+          # failure even though the match succeeded. It is a race, so it passes
+          # or fails depending on how many entries the chart happens to have.
+          listing=$(tar -tzf .cr-release-packages/*.tgz | sort)
           echo "==> packaged contents"
-          tar -tzf .cr-release-packages/*.tgz | sort
-          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/Chart.yaml" \
+          printf '%s\n' "$listing"
+
+          grep -qx "ldap-manager/Chart.yaml" <<<"$listing" \
             || { echo "::error::the package has no Chart.yaml"; exit 1; }
-          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/README.md" \
+          grep -qx "ldap-manager/README.md" <<<"$listing" \
             || { echo "::error::the package has no README.md (Artifact Hub renders it)"; exit 1; }
-          tar -tzf .cr-release-packages/*.tgz | grep -qx "ldap-manager/LICENSE" \
+          grep -qx "ldap-manager/LICENSE" <<<"$listing" \
             || { echo "::error::the package has no LICENSE"; exit 1; }
-          if tar -tzf .cr-release-packages/*.tgz | grep -qE "artifacthub-repo\.yml|ct\.yaml|\.github/"; then
+          if grep -qE "artifacthub-repo\.yml|ct\.yaml|\.github/" <<<"$listing"; then
             echo "::error::repository plumbing leaked into the chart package"
             exit 1
           fi
