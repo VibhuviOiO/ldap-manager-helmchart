@@ -27,9 +27,9 @@ entries:
         - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap
     apiVersion: v2
     appVersion: 1.1.0
-    created: "2026-10-03T02:00:12.746359468Z"
+    created: "2026-10-03T02:00:51.34031033Z"
     description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
-    digest: 8fe9044a9b6653fade0c0743f88cebdc74e46ba75e5f59bcb7762ea1077af1e5
+    digest: 677834c9112e7671617e869131798efeb23b21bdd3f8ee9f755bd0cb9cf43583
     home: https://vibhuvioio.com/ldap-manager/
     icon: https://vibhuvioio.com/img/logo.svg
     keywords:
@@ -80,7 +80,7 @@ entries:
         - url: https://artifacthub.io/packages/helm/vibhuvioio/openldap
     apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-10-03T02:00:12.745308873Z"
+    created: "2026-10-03T02:00:51.33964983Z"
     description: Web UI and API to manage one or more OpenLDAP clusters (vibhuvioio/ldap-manager)
     digest: bb05dfc8b4ad9ecf77a67015f54f3a77ccd08fe40e77413bf98f9c68d4aaad44
     home: https://vibhuvioio.com/ldap-manager/
@@ -107,4 +107,4 @@ entries:
     urls:
     - https://VibhuviOiO.github.io/ldap-manager-helmchart/ldap-manager-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-03T02:00:12.744140327Z"
+generated: "2026-10-03T02:00:51.338858433Z"
