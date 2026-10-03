@@ -8,7 +8,7 @@ type: application
 # This repository is the chart's home: release.yml enforces tag == `version`, so
 # bump `version` for any change to templates/ or values.yaml. A new image needs
 # no chart change - appVersion picks it up.
-version: 0.1.0
+version: 0.2.0
 appVersion: "1.1.0"
 kubeVersion: ">=1.24.0-0"
 # Square, vector, and already yours.
