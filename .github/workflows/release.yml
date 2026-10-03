@@ -146,8 +146,7 @@ jobs:
             cp artifacthub-repo.yml /tmp/gh-pages/
           fi
 
-          helm repo index /tmp/gh-pages --url "$REPO_URL" \
-            --sign --key "${{ secrets.HELM_SIGNING_KEY }}" --keyring /tmp/secring.gpg
+          helm repo index /tmp/gh-pages --url "$REPO_URL"
 
           # A Helm repository has index.yaml, not index.html, so the Pages root
           # 404s. This landing page is copied on every release, so edit the file
